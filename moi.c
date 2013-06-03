@@ -27,6 +27,8 @@
  * Reference:
  *    Reference to the MOI file format was found here:
  *    http://en.wikipedia.org/wiki/MOI_(file_format)
+ *    http://forum.camcorderinfo.com/bbs/t135224.html   (further down is English translation)
+ *    NOTE: there are differences in those two descriptions!  Not sure which is right...
  *
  *    mpeg header reference:  (sequence header is what we care about)
  *    http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html
@@ -155,10 +157,10 @@ int main(int argc, char *argv[]) {
       {"verbose",          no_argument,       0, 'v'},
       {"help",             no_argument,       0, 'h'},
       {"info",             no_argument,       0, 'i'},
-      {"overwrite",        no_argument,       0, 'o'},
-      {"modification-time",no_argument,       0, 'm'},
-      {"mtime",            no_argument,       0, 'm'},  /* alias */
-      {"separate-dirs",    no_argument,       0, 'c'},  /* c for create dirs */
+      {"clobber",          no_argument,       0, 'c'},
+      {"modification-time",no_argument,       0, 't'},
+      {"mtime",            no_argument,       0, 't'},  /* alias */
+      {"make-dirs",        no_argument,       0, 'm'},  /* c for create dirs */
       {"mod-file",         required_argument, 0, 'f'},
       {"src-dir",          required_argument, 0, 's'},
       {"dest-dir",         required_argument, 0, 'd'},
@@ -172,7 +174,7 @@ int main(int argc, char *argv[]) {
    optarg = NULL;
    //while ((c = getopt_long(argc, argv, "itvho", long_options, &option_index)) != -1 ) {
    while (1) {
-      c = getopt_long(argc, argv, "itvhomf:s:d:", long_options, &option_index);
+      c = getopt_long(argc, argv, "vhictmf:s:d:", long_options, &option_index);
 
       /* Detect the end of the options. */
       if (c == -1)
@@ -192,7 +194,7 @@ int main(int argc, char *argv[]) {
             */
 
          /* do not overwrite existing files */
-         case 'o':
+         case 'c':
             noclobber = 0;
             break;
          /* print MOI info only, don't copy or create mpeg */
@@ -832,54 +834,48 @@ void usage() {
       ;
 #endif
 
-   fprintf(stderr, "usage: %s [-h] from_dir to_dir\n", this);
-
+   //fprintf(stderr, "usage: %s [-h] from_dir to_dir\n", this);
       
- /*
- * NAME
- *    %s - creates an mpeg file from an MOD/MOI file pair, or reports
- *    on information stored in the MOI file.
- *
- * SYNOPSIS
- *    Information only:
- *    %s -i /path/to/source/dir/file.MOI
- *    %s -i /path/to/source/dir
- *
- *    Convert to mpeg:
- *    %s -f /path/to/source/dir/file.MOD -d /path/to/destination/dir
- *    %s -s /path/to/source/dir -d /path/to/destination/dir
- *
- * DESCRITION
- *    This program combines .MOD/.MOI file pairs from the src_dir into an mpeg
- *    in the dest_dir, correctly setting the aspect ratio in the .mpg file
- *    headers, and using the date as a file name.
- *
- *    Certain brands of digital, tapeless camcorders, (JVC, Panasonic and
- *    Cannon) save two files for each video.  The video file, with an extension
- *    of .MOD, is an MPEG-2 and the metadata file, with an extension of .MOI.
- *    Software that ships with these camcorders, combines the two files when
- *    extracting from the camcorder, however as far as I am aware, they are not
- *    available on Linux.
- *
- *    You can, if you like, just copy the .MOD files from your camcorder to
- *    your computer and rename the .MOD to .mpg (or .mpeg).  This will work as
- *    long as you have recorded in 4:3 aspect ratio.  However, if you have
- *    recorded in 16:9 ratio, the aspect ratio will not be set correctly in the
- *    .MOD file.
- *
- *    I have only tested this with my camcorder (Panasonic SDR-H18) on Ubuntu 10.04
- *
- *
- * REFERENCE
- *    File formats: 
- *    MOD : http://en.wikipedia.org/wiki/MOD_and_TOD_(video_format)
- *    MOI : http://en.wikipedia.org/wiki/MOI_(file_format)
- *    MPEG: http://dvd.sourceforge.net/dvdinfo/pes-hdr.html
- *
- */
-
-
-
+   printf(" NAME\n");
+   printf("    %s - creates an mpeg file from an MOD/MOI file pair, or reports\n", this);
+   printf("    on information stored in the MOI file.\n");
+   printf("\n");
+   printf(" SYNOPSIS\n");
+   printf("    Information only:\n");
+   printf("    %s -i /path/to/source/dir/file.MOI\n", this);
+   printf("    %s -i /path/to/source/dir\n", this);
+   printf("\n");
+   printf("    Convert to mpeg:\n");
+   printf("    %s -f /path/to/source/dir/file.MOD -d /path/to/destination/dir\n", this);
+   printf("    %s -s /path/to/source/dir -d /path/to/destination/dir\n", this);
+   printf("\n");
+   printf(" DESCRITION\n");
+   printf("    This program combines .MOD/.MOI file pairs from the src_dir into an mpeg\n");
+   printf("    in the dest_dir, correctly setting the aspect ratio in the .mpg file\n");
+   printf("    headers, and using the date as a file name.\n");
+   printf("\n");
+   printf("    Certain brands of digital, tapeless camcorders, (JVC, Panasonic and\n");
+   printf("    Cannon) save two files for each video.  The video file, with an extension\n");
+   printf("    of .MOD, is an MPEG-2 and the metadata file, with an extension of .MOI.\n");
+   printf("    Software that ships with these camcorders, combines the two files when\n");
+   printf("    extracting from the camcorder, however as far as I am aware, they are not\n");
+   printf("    available on Linux.\n");
+   printf("\n");
+   printf("    You can, if you like, just copy the .MOD files from your camcorder to\n");
+   printf("    your computer and rename the .MOD to .mpg (or .mpeg).  This will work as\n");
+   printf("    long as you have recorded in 4:3 aspect ratio.  However, if you have\n");
+   printf("    recorded in 16:9 ratio, the aspect ratio will not be set correctly in the\n");
+   printf("    .MOD file.\n");
+   printf("\n");
+   printf("    I have only tested this with my camcorder (Panasonic SDR-H18) on Ubuntu 10.04\n");
+   printf("\n");
+   printf("\n");
+   printf(" REFERENCE\n");
+   printf("    File formats: \n");
+   printf("    MOD : http://en.wikipedia.org/wiki/MOD_and_TOD_(video_format)\n");
+   printf("    MOI : http://en.wikipedia.org/wiki/MOI_(file_format)\n");
+   printf("    MPEG: http://dvd.sourceforge.net/dvdinfo/pes-hdr.html\n");
+   printf("\n");
 
    exit(1);
 }
