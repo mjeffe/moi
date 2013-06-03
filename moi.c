@@ -100,8 +100,6 @@ int make_dirs = 0;           /* if set, create seperate directories for each dat
 int date_to_use = MOI_DATE;  /* default to using date in MOI file */
 int info_only = 0;           /* if set, don't copy, only report MOI info */
 int noclobber = 1;           /* if set, do not overwrite existing mpeg files */
-static char *ignored_entries[] = { ".", "..", NULL };
-static char *searched_entries[] = { ".MOD", ".mod", ".Mod", NULL };
 static char *mpeg_seqh_ar_codes[] = {   /* mpeg sequence header aspect ratio codes */
    "forbidden!",
    "1:1",
@@ -151,6 +149,8 @@ int main(int argc, char *argv[]) {
    int c;
    char *src_dir = NULL;
    char *src_file = NULL, *src_file_base = NULL, *src_file_cpy1 = NULL, *src_file_cpy2 = NULL;
+   char full_dest_dir[2048];
+   char cwd[2048];
    /* getopt_long structures */
    int option_index = 0;
    static struct option long_options[] = {
@@ -272,15 +272,34 @@ int main(int argc, char *argv[]) {
    /*
     * Do the work
     */
+
+   /* turn dest_dir into an absolute path */
+   if ( dest_dir[0] != '/' ) {
+      if ( !getcwd(cwd, sizeof cwd) ) {
+         perror("cannot save cwd\n");
+         exit(1);
+      }
+      sprintf(full_dest_dir, "%s/%s", cwd, dest_dir);
+      dest_dir = full_dest_dir;
+   }
+
    if ( src_file ) {
+      /* man page says dirname/basename may clobber dir string, make copies */
       src_file_cpy1 = strdup(src_file);
       src_file_cpy2 = strdup(src_file);
       src_dir = dirname(src_file_cpy2);
       src_file_base = basename(src_file_cpy1);
       process_file(src_dir, src_file_base);
    }
-   else
+   else {
+      /* OJO! EITHER turn dest_dir into an absolute path, or
+       * modify process_dir() so it doesn't actually cd into
+       * each dir.  Currently, once I've cd'ed into a the src_dir, I can't create
+       * my mpeg files because I'm no longer relative to whatever path I had for
+       * dest_dir.
+       */
       process_dir(src_dir);
+   }
 
    return(0);
 }
@@ -483,12 +502,17 @@ void get_moi_info(moi_info_type *info, char *fname) {
  * The aspect ratio is stored as a code in offset 7 of the header.
  * Aspect ratio is in the upper nibble and frame rate in the lower.
  *
- * Code  Aspect Ratio   Frame Rate
+ * Sequence header format (the part we care about):
+ * |   byte 4      |     byte 5    |    byte 6     |      byte 7           |...
+ * |7 6 5 4 3 2 1 0 7 6 5 4|3 2 1 0 7 6 5 4 3 2 1 0| 7  6  5  4 |3  2  1  0|...
+ * |horizontal size        |vertical size          |aspect ratio|frame rate|...
+ *
+ * Code  Aspect Ratio   Frame Rate           (also sort of defines TV System)
  * 0     forbidden      forbidden
  * 1     1:1            24000/1001 (23.976)
  * 2     4:3            24
- * 3     16:9           25
- * 4     2.21:1         30000/1001 (29.97)
+ * 3     16:9           25                   (PAL)
+ * 4     2.21:1         30000/1001 (29.97)   (NTSC)
  * 5     reserved       30
  * 6     reserved       50
  * 7     reserved       60000/1001 (59.94)
@@ -523,9 +547,9 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
 
    /* build the mpeg file name */
    if ( date_to_use == MTIME_DATE )
-      sprintf(mpeg_fname, "%s/%s.mpg", dest_dir, info->mtime_date_str);
+      sprintf(mpeg_fname, "%s/mov-%s.mpg", dest_dir, info->mtime_date_str);
    else 
-      sprintf(mpeg_fname, "%s/%s.mpg", dest_dir, info->moi_date_str);
+      sprintf(mpeg_fname, "%s/mov-%s.mpg", dest_dir, info->moi_date_str);
 
    if ( verbose )
       fprintf(stdout, "Creating %s\n", mpeg_fname);
@@ -541,6 +565,9 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
          return;
       }
    }
+
+   if ( verbose )
+      fprintf(stdout, "opening %s\n", mpeg_fname);
 
    /* open mpeg file */
    if ( (mpeg = fopen(mpeg_fname, "wb")) == NULL ) {
@@ -581,7 +608,7 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
       stop = end - 8;  /* signature + 4 bytes of header */
 
       if ( verbose >= 4 )
-         printf("blk(%d) br=%d, end-buf=%d, stop-buf=%d, end-stop=%d, buf-hold=%d\n",
+         printf("blk(%d) br=%d, end-buf=%ld, stop-buf=%ld, end-stop=%ld, buf-hold=%ld\n",
                blk, br, end-buf, stop-buf, end-stop, buf-hold);
       
       /* scan through the buffer */
@@ -602,7 +629,7 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
                printf("\n");
             }
             
-            /* First sequence header we come to is our reference header. */
+            /* use first sequence header we come to as our reference header */
             if ( reference_seqh[3] == 0 ) {
                memcpy(reference_seqh, p, 12);
 
@@ -680,7 +707,7 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
          exit(1);
       }
       if ( verbose >= 4 )
-         printf("blk(%d) bw=%d, tbw=%lld \n", blk, p - buf, tbw);
+         printf("blk(%d) bw=%ld, tbw=%lld \n", blk, p - buf, tbw);
 
       /* since seqh may span blocks, move last bit of data from end of buffer
        * to the beginning of next buffer */
@@ -703,7 +730,7 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
       exit(1);
    }
    if ( verbose >= 4 )
-      printf("blk(%d) bw=%d, tbw=%lld \n", blk, p - buf, tbw);
+      printf("blk(%d) bw=%ld, tbw=%lld \n", blk, p - buf, tbw);
 
 
    /* wrap up */
@@ -728,6 +755,7 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
  * Return true if fname is one of the file types we are looking for
  ****************************************************************************/
 int is_search_ent(char *fname) {
+   static char *searched_entries[] = { ".MOD", ".mod", ".Mod", NULL };
    char **p;
    int nlen, slen;
 
@@ -804,6 +832,7 @@ int locate_moi(char *moi_fname, char *mod_fname) {
  * Return true if NAME should not be recursed into
  ****************************************************************************/
 int ignore_ent(char *fname) {
+   static char *ignored_entries[] = { ".", "..", NULL };
    char **p;
 
    for (p = ignored_entries; *p; p++) {
@@ -820,20 +849,6 @@ int ignore_ent(char *fname) {
  * print usage message
  ****************************************************************************/
 void usage() {
-#ifdef IGNORE_THIS
-      {"verbose",          no_argument,       0, 'v'},
-      {"help",             no_argument,       0, 'h'},
-      {"info",             no_argument,       0, 'i'},
-      {"overwrite",        no_argument,       0, 'o'},
-      {"modification-time",no_argument,       0, 'm'},
-      {"mtime",            no_argument,       0, 'm'},  /* alias */
-      {"separate-dirs",    no_argument,       0, 'c'},  /* c for create dirs */
-      {"mod-file",         required_argument, 0, 'f'},
-      {"src-dir",          required_argument, 0, 's'},
-      {"dest-dir",         required_argument, 0, 'd'},
-      ;
-#endif
-
    //fprintf(stderr, "usage: %s [-h] from_dir to_dir\n", this);
       
    printf(" NAME\n");
@@ -869,13 +884,62 @@ void usage() {
    printf("\n");
    printf("    I have only tested this with my camcorder (Panasonic SDR-H18) on Ubuntu 10.04\n");
    printf("\n");
+   printf(" OPTIONS\n");
+   printf("    -v, --verbose\n");
+   printf("             Verbose messages\n");
+   printf("\n");
+   printf("    -h, --help\n");
+   printf("             Prints this help message\n");
+   printf("\n");
+   printf("    -i, --info\n");
+   printf("             Prints information from MOI file only, does not convert\n");
+   printf("\n");
+   printf("    -c, --clobber\n");
+   printf("             Allow overwriting of mpeg files with the same name. Default\n");
+   printf("             behavior is to skip (not convert) if an mpeg file with the same\n");
+   printf("             name already exists.\n");
+   printf("\n");
+   printf("    -t, --modification-time, --mtime\n");
+   printf("             Use the modification time of the MOD file.  Default is to use\n");
+   printf("             the time defined in the MOI file.\n");
+   printf("\n");
+   printf("    -m, --make-dirs\n");
+   printf("             Make directory structure in destination dir based on file time\n");
+   printf("             UNIMPLEMENTED!\n");
+   printf("\n");
+   printf("    -f, --mod-file\n");
+   printf("             Convert only the single MOD file\n");
+   printf("\n");
+   printf("    -s, --src-dir\n");
+   printf("             Source directory. Will convert all MOD/MOI pairs found in this dir\n");
+   printf("\n");
+   printf("    -d, --des-dir\n");
+   printf("             Destination directory. All files will be saved in this directory\n");
    printf("\n");
    printf(" REFERENCE\n");
    printf("    File formats: \n");
-   printf("    MOD : http://en.wikipedia.org/wiki/MOD_and_TOD_(video_format)\n");
-   printf("    MOI : http://en.wikipedia.org/wiki/MOI_(file_format)\n");
-   printf("    MPEG: http://dvd.sourceforge.net/dvdinfo/pes-hdr.html\n");
+   printf("    MOD   : http://en.wikipedia.org/wiki/MOD_and_TOD\n");
+   printf("    MOI   : http://en.wikipedia.org/wiki/MOI_(file_format)\n");
+   printf("    MPEG  : http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html\n");
+   printf("    MPEG-2: http://en.wikipedia.org/wiki/MPEG-2\n");
    printf("\n");
+   printf("\n");
+
+#ifdef IGNORE_THIS_FOR_REFERENCE_ONLY
+   static struct option long_options[] = {
+      {"verbose",          no_argument,       0, 'v'},
+      {"help",             no_argument,       0, 'h'},
+      {"info",             no_argument,       0, 'i'},
+      {"clobber",          no_argument,       0, 'c'},
+      {"modification-time",no_argument,       0, 't'},
+      {"mtime",            no_argument,       0, 't'},  /* alias */
+      {"make-dirs",        no_argument,       0, 'm'},  /* c for create dirs */
+      {"mod-file",         required_argument, 0, 'f'},
+      {"src-dir",          required_argument, 0, 's'},
+      {"dest-dir",         required_argument, 0, 'd'},
+      {0, 0, 0, 0}
+   };
+#endif
 
    exit(1);
 }
