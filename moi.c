@@ -81,6 +81,7 @@
 #include <string.h>    /* strcpy, strdup, etc */
 #include <sys/types.h> /* stat, mkdir */
 #include <sys/stat.h>  /* stat, mkdir */
+#include <errno.h>
 #include <unistd.h>    /* stat, NULL, etc */
 #include <time.h>      /* localtime */
 #include <dirent.h>    /* opendir, chdir, getcwd, etc */
@@ -101,6 +102,8 @@
 #define RW_BLOCK_SIZE 1048576    /* read 1MB chunks at a time */
 #define MTIME_DATE 1
 #define MOI_DATE   2
+
+//typedef struct stat Stat;
 
 
 typedef struct moi_info {
@@ -173,8 +176,10 @@ int is_file_type(char *fname, char **suffixes);
 void process_dir(char *dirname);
 void process_file(char *dir, char *fname);
 void process_mod(char *dir, char *fname);
-void make_mpeg(char *mod_fname, moi_info_type *info);
+void make_mpeg(char *mod_fname, moi_info_type *info, char *output_dir);
 int set_mpeg_ar(FILE *mpeg, char *moi_ar_str);
+static int do_mkdir(const char *path, mode_t mode);
+int mkpath(const char *path, mode_t mode);
 
 
 
@@ -428,14 +433,14 @@ void process_file(char *dir, char *fname) {
  * 3) create mpeg file in target dir
  ****************************************************************************/
 void process_mod(char *dir, char *fname) {
-   char *mod_fname, *moi_fname;
+   char *mod_fname, *dirname;
    moi_info_type *info;
 
 
    info = (moi_info_type *) malloc(sizeof(moi_info_type));
    mod_fname = (char *) malloc(MAX_PATH_LEN);
-   moi_fname = (char *) malloc(MAX_PATH_LEN);
-   if ( info == NULL || mod_fname == NULL || moi_fname == NULL ) {
+   dirname   = (char *) malloc(MAX_PATH_LEN);
+   if ( info == NULL || mod_fname == NULL || dirname == NULL ) {
       fprintf(stderr, "%s: unable to allocate memory in process_mod()\n", this);
       exit(1);
    }
@@ -444,21 +449,24 @@ void process_mod(char *dir, char *fname) {
    if ( verbose >= 1 )
       printf("%s: processing %s\n", this, mod_fname);
 
-   if ( locate_moi(moi_fname, mod_fname) ) {
-      get_moi_info(info, moi_fname);
+   get_moi_info(info, mod_fname);
 
-      /* build output dir structure */
-      /* TODO */
-
-      if ( !info_only )
-         make_mpeg(mod_fname, info);
-   }
+   /* build output dir structure */
+   if ( date_to_use == MTIME_DATE )
+      sprintf(dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->mtime_year, info->mtime_mon, info->mtime_day);
    else
-      fprintf(stderr, "%s: WARNING: no matching .MOI file for %s\n", this, mod_fname);
+      sprintf(dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->moi_year, info->moi_mon, info->moi_day);
+
+   if ( verbose >= 3 )
+      printf("%s: creating target dir %s\n", this, dirname);
+   mkpath(dirname, 0777);
+
+   if ( !info_only )
+      make_mpeg(mod_fname, info, dirname);
 
    free(info);
    free(mod_fname);
-   free(moi_fname);
+   free(dirname);
 }
 
 
@@ -468,17 +476,30 @@ void process_mod(char *dir, char *fname) {
  * http://forum.camcorderinfo.com/bbs/t135224.html  (further down is English translation)
  * http://en.wikipedia.org/wiki/MOI_(file_format)
  ****************************************************************************/
-void get_moi_info(moi_info_type *info, char *fname) {
+void get_moi_info(moi_info_type *info, char *mod_fname) {
+   char *moi_fname;
+   size_t len;
    FILE *infile;
    char str[64] = "";
    struct tm *tm_buf;
    struct stat mtime_buf;
 
 
+   moi_fname = (char *) malloc(MAX_PATH_LEN);
+   if ( moi_fname == NULL ) {
+      fprintf(stderr, "%s: unable to allocate memory in get_moi_info()\n", this);
+      exit(1);
+   }
+
+   /* srip .MOD, and replace with .MOI */
+   len = strlen(mod_fname) - 4;
+   memcpy(moi_fname, mod_fname, len);
+   memcpy(moi_fname + len, ".MOI\0", 5);   
+
    /* open input file */
-   infile = fopen(fname, "rb");
+   infile = fopen(moi_fname, "rb");
    if (infile == NULL) {
-      fprintf(stderr, "%s: unable to open %s\n", this, fname);
+      fprintf(stderr, "%s: WARNING: no matching .MOI file for %s\n", this, mod_fname);
       exit(1);
    }
 
@@ -548,12 +569,13 @@ void get_moi_info(moi_info_type *info, char *fname) {
    strcpy(info->moi_date_str,str);
 
    if ( (verbose >= 2) || info_only ) {
-      printf("%s: MOI Info in (%s):\n", this, fname);
+      printf("%s: MOI Info in (%s):\n", this, moi_fname);
       printf("   moi_date_str   = %s\n", info->moi_date_str);
       printf("   mtime_date_str = %s\n", info->mtime_date_str);
       printf("   aspect_ratio   = 0x%X (%s)\n", info->aspect_ratio, info->aspect_ratio_str);
    }
 
+   free(moi_fname);
 }
 
 
@@ -591,7 +613,7 @@ void get_moi_info(moi_info_type *info, char *fname) {
  * http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html#seq
  *
  ****************************************************************************/
-void make_mpeg(char *mod_fname, moi_info_type *info) {
+void make_mpeg(char *mod_fname, moi_info_type *info, char *output_dir) {
    FILE *mpeg, *mod;
    char *mpeg_fname;
    unsigned char reference_seqh[] = { 0,0,0,0,0,0,0,0,0,0,0,0 };
@@ -613,9 +635,9 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
 
    /* build the mpeg file name */
    if ( date_to_use == MTIME_DATE )
-      sprintf(mpeg_fname, "%s/mov-%s.mpg", dest_dir, info->mtime_date_str);
+      sprintf(mpeg_fname, "%s/mov-%s.mpg", output_dir, info->mtime_date_str);
    else 
-      sprintf(mpeg_fname, "%s/mov-%s.mpg", dest_dir, info->moi_date_str);
+      sprintf(mpeg_fname, "%s/mov-%s.mpg", output_dir, info->moi_date_str);
 
    if ( verbose >= 2 )
       printf("%s: creating mpeg file %s\n", this, mpeg_fname);
@@ -1044,6 +1066,63 @@ void usage() {
       {0, 0, 0, 0}
    };
 #endif
+}
+
+
+/*
+ * mkpath functions by Jonathan Leffler
+ * from: http://stackoverflow.com/questions/675039/how-can-i-create-directory-tree-in-c-linux
+ */
+static int do_mkdir(const char *path, mode_t mode)
+{
+    struct stat     st;
+    int             status = 0;
+
+    if (stat(path, &st) != 0)
+    {
+        /* Directory does not exist. EEXIST for race condition */
+        if (mkdir(path, mode) != 0 && errno != EEXIST)
+            status = -1;
+    }
+    else if (!S_ISDIR(st.st_mode))
+    {
+        errno = ENOTDIR;
+        status = -1;
+    }
+
+    return(status);
+}
+
+/**
+** mkpath - ensure all directories in path exist
+** Algorithm takes the pessimistic view and works top-down to ensure
+** each directory in path exists, rather than optimistically creating
+** the last element and working backwards.
+*/
+int mkpath(const char *path, mode_t mode)
+{
+    char           *pp;
+    char           *sp;
+    int             status;
+    char           *copypath = strdup(path);
+
+    status = 0;
+    pp = copypath;
+    while (status == 0 && (sp = strchr(pp, '/')) != 0)
+    {
+        if (sp != pp)
+        {
+            /* Neither root nor double slash in path */
+            *sp = '\0';
+            status = do_mkdir(copypath, mode);
+            *sp = '/';
+        }
+        pp = sp + 1;
+    }
+    if (status == 0)
+        status = do_mkdir(path, mode);
+    free(copypath);
+    return (status);
 }
 
 
