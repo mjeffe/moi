@@ -41,13 +41,19 @@
  *    file name and sets the aspect ratio in the .mpg file.
  *
  * TODO:
+ *    - copy and save .moi files along with .mpg files
+ *    - Add ability to create date / time level directories
+ *    - make recursive flag and CHANGE process_dir() so it does not recurse by default!
+ *    - Add ability to use MOI date, but make unique file name if duplicate - moi resolution is 1 minute!
+ *    - Add check to make sure mpeg file size is same as MOD file size
+ *    - modify so we can get info only on an MOI file, regardless of whether or not
+ *      it has an accompanying MOD file. This will require rearanging how process_file()
+ *      and process_mod() work.
  *    - Report on when the date contained in the .MOI file is very different
  *      from the .MOD file creation date.
  *    - Make block size a parameter.
- *    - Add ability to create date / time level directories
- *    - Add check to make sure mpeg file size is same as MOD file size
- *    - Add ability to use MOI date, but make unique file name if duplicate - may not mess with this
  *    - Add ability to extract aspect ratio, frame rate, etc, from mpeg or MOD
+ *    - when looking for .MOI file, may want to try ignoring case for suffix
  *
  * AUTHOR
  *    Matt Jeffery (mjeffe@gmail.com)
@@ -73,8 +79,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>    /* strcpy, strdup, etc */
-#include <sys/types.h> /* stat */
-#include <sys/stat.h>  /* stat */
+#include <sys/types.h> /* stat, mkdir */
+#include <sys/stat.h>  /* stat, mkdir */
 #include <unistd.h>    /* stat, NULL, etc */
 #include <time.h>      /* localtime */
 #include <dirent.h>    /* opendir, chdir, getcwd, etc */
@@ -125,6 +131,7 @@ char *this;
 int verbose = 0;
 char *dest_dir;
 int make_dirs = 0;           /* if set, create seperate directories for each date */
+int recursive = 0;           /* if set, process subdirs */
 int date_to_use = MOI_DATE;  /* default to using date in MOI file */
 int info_only = 0;           /* if set, don't copy, only report MOI info */
 int noclobber = 1;           /* if set, do not overwrite existing mpeg files */
@@ -161,7 +168,8 @@ static int chomp(char *s);
 void make_dir(char *dir);
 static int isdir(char *name);
 int ignore_ent(char *name);
-int is_search_ent(char *fname);
+//int is_search_ent(char *fname);
+int is_file_type(char *fname, char **suffixes);
 void process_dir(char *dirname);
 void process_file(char *dir, char *fname);
 void process_mod(char *dir, char *fname);
@@ -179,6 +187,7 @@ int main(int argc, char *argv[]) {
    char *src_file = NULL, *src_file_base = NULL, *src_file_cpy1 = NULL, *src_file_cpy2 = NULL;
    char abs_dest_dir[MAX_PATH_LEN];  /* used to make dest_dir an absolute path */
    char cwd[MAX_PATH_LEN];
+   DIR *dir;
    /* getopt_long structures */
    int option_index = 0;
    static struct option long_options[] = {
@@ -189,6 +198,7 @@ int main(int argc, char *argv[]) {
       {"modification-time",no_argument,       0, 't'},
       {"mtime",            no_argument,       0, 't'},  /* alias */
       {"make-dirs",        no_argument,       0, 'm'},  /* c for create dirs */
+      {"recursive",        no_argument,       0, 'r'},
       {"mod-file",         required_argument, 0, 'f'},
       {"src-dir",          required_argument, 0, 's'},
       {"dest-dir",         required_argument, 0, 'd'},
@@ -202,7 +212,7 @@ int main(int argc, char *argv[]) {
    optarg = NULL;
    //while ((c = getopt_long(argc, argv, "itvho", long_options, &option_index)) != -1 ) {
    while (1) {
-      c = getopt_long(argc, argv, "vhictmf:s:d:", long_options, &option_index);
+      c = getopt_long(argc, argv, "vhictmrf:s:d:", long_options, &option_index);
 
       /* Detect the end of the options. */
       if (c == -1)
@@ -249,30 +259,20 @@ int main(int argc, char *argv[]) {
          case 'd':
             dest_dir = optarg;
             break;
+         case 'r':
+            recursive = 1;
+            break;
          case 'v':
             verbose++;
             break;
          case 'h':
             usage();
+            exit(1);
          default:
-            fprintf(stderr,"%s: Unknown or invalid parameters\n", this);
-            usage();
+            //fprintf(stderr,"%s: Unknown or invalid parameters\n", this);
+            exit(1);
       }
    }
-
-
-   /*
-    * Validate arguments and options
-    */
-
-   if ( (argc > optind) ) {
-      fprintf(stderr, "Error: unknown options or extra stuff on the command line.\n");
-      usage();
-   }
-
-   /* strip trailing / if any from dest_dir */
-   if ( dest_dir && dest_dir[strlen(dest_dir)-1] == '/' )
-      dest_dir[strlen(dest_dir)-1] = '\0';
 
    /*
    if ( (argc == optind + 1) ) {
@@ -285,34 +285,71 @@ int main(int argc, char *argv[]) {
    */
 
 
-   /* request for info, we only need input source */
-   if ( info_only  && !(src_dir || src_file) ) {
-      fprintf(stderr, "%s: Error: missing either -s or -f\n", this);
+   /*
+    * Validate arguments and options
+    */
+
+   if ( (argc > optind) ) {
+      fprintf(stderr, "Error: unknown options or extra stuff on the command line.\n");
       exit(1);
    }
 
-   /* full processing requested, we need src and des sources */
-   if ( !dest_dir && !(src_dir || src_file) ) {
-         fprintf(stderr, "%s: Error: missing -d, and either -s or -f\n", this);
-         usage();
+   /* help, version, etc. should have been taken care of above,
+    * for anything else we need an input source */
+   if ( !(src_dir || src_file) ) {
+      fprintf(stderr, "%s: Error: missing input source option - either -s or -f\n", this);
+      exit(1);
+   }
+
+   /* unless info_only, we also need an output dir */
+   if ( !info_only && !dest_dir ) {
+      fprintf(stderr, "%s: Error: missing output source option -d\n", this);
+      exit(1);
    } 
+
+   /* if asking for info only, we need an MOI file */
+   /*
+   if ( info_only && src_file ) {
+      if ( strcasecmp((src_file + strlen(src_file) - 4), ".MOI" ) != 0 ) {
+         fprintf(stderr, "%s: ERROR, when using -i, you need to specify an MOI file with -f\n", this);
+         exit(1);
+      }
+   }
+   */
 
    /*
     * Do the work
     */
 
-   /* turn dest_dir into an absolute path */
-   if ( dest_dir[0] != '/' ) {
-      if ( !getcwd(cwd, sizeof cwd) ) {
-         perror("cannot get cwd\n");
+   /* strip trailing / if any from dest_dir */
+   if ( !info_only ) {
+      if ( dest_dir && dest_dir[strlen(dest_dir)-1] == '/' )
+         dest_dir[strlen(dest_dir)-1] = '\0';
+
+      /* turn dest_dir into an absolute path */
+      if ( dest_dir[0] != '/' ) {
+         if ( !getcwd(cwd, sizeof cwd) ) {
+            perror("cannot get cwd\n");
+            exit(1);
+         }
+         sprintf(abs_dest_dir, "%s/%s", cwd, dest_dir);
+         dest_dir = abs_dest_dir;
+      }
+
+      /* check to see if dir exists.
+       * note, in general this is not a great idea to check dir, close it, then use it later
+       * since it can cause an obvious race condition... */
+      dir = opendir(dest_dir);
+      if ( dir ) {
+         closedir(dir);  /* dir exists */
+      } else {
+         fprintf(stderr, "%s: destination directory does not exist: %s\n", this, dest_dir);
          exit(1);
       }
-      sprintf(abs_dest_dir, "%s/%s", cwd, dest_dir);
-      dest_dir = abs_dest_dir;
    }
 
    if ( src_file ) {
-      /* man page says dirname/basename may clobber dir string, make copies */
+      /* man page says dirname/basename may clobber string, so make copies */
       src_file_cpy1 = strdup(src_file);
       src_file_cpy2 = strdup(src_file);
       src_dir = dirname(src_file_cpy2);
@@ -328,8 +365,8 @@ int main(int argc, char *argv[]) {
 
 
 /*****************************************************************************
- * call process_file() on every file in dirname, recursively descend into
- * directories except . and ..
+ * call process_file() on every file in dirname. 
+ * If -r, recursively descend into directories except . and ..
  ****************************************************************************/
 void process_dir(char *dirname) {
    DIR *dir;
@@ -349,7 +386,7 @@ void process_dir(char *dirname) {
       perror("cannot get cwd for new dir\n");
       exit(1);
    }
-   if ( verbose >= 1 )
+   if ( verbose >= 2 )
       printf("%s: processing directory:%s\n", this, newd);
 
    if ( !(dir = opendir(".")) ) {
@@ -360,7 +397,7 @@ void process_dir(char *dirname) {
    while ( (ent = readdir(dir)) ) {
       if ( ignore_ent(ent->d_name) )
          continue;
-      else if ( isdir(ent->d_name) ) {
+      else if ( isdir(ent->d_name) && recursive ) {
          process_dir(ent->d_name);
       }
       else
@@ -379,7 +416,8 @@ void process_dir(char *dirname) {
  * a generic directory traversal.
  ****************************************************************************/
 void process_file(char *dir, char *fname) {
-   if ( is_search_ent(fname) )
+   static char *mod_suffix[] = { ".mod", NULL };
+   if ( is_file_type(fname, mod_suffix) )
       process_mod(dir, fname); 
 }
 
@@ -398,7 +436,7 @@ void process_mod(char *dir, char *fname) {
    mod_fname = (char *) malloc(MAX_PATH_LEN);
    moi_fname = (char *) malloc(MAX_PATH_LEN);
    if ( info == NULL || mod_fname == NULL || moi_fname == NULL ) {
-      fprintf(stderr, "%s: unable to allocate memory for buffers in process_mod\n", this);
+      fprintf(stderr, "%s: unable to allocate memory in process_mod()\n", this);
       exit(1);
    }
 
@@ -408,11 +446,15 @@ void process_mod(char *dir, char *fname) {
 
    if ( locate_moi(moi_fname, mod_fname) ) {
       get_moi_info(info, moi_fname);
+
+      /* build output dir structure */
+      /* TODO */
+
       if ( !info_only )
          make_mpeg(mod_fname, info);
    }
    else
-      fprintf(stderr, "Warning! Found %s with no matching .MOI file\n", mod_fname);
+      fprintf(stderr, "%s: WARNING: no matching .MOI file for %s\n", this, mod_fname);
 
    free(info);
    free(mod_fname);
@@ -433,7 +475,6 @@ void get_moi_info(moi_info_type *info, char *fname) {
    struct stat mtime_buf;
 
 
-   
    /* open input file */
    infile = fopen(fname, "rb");
    if (infile == NULL) {
@@ -494,7 +535,7 @@ void get_moi_info(moi_info_type *info, char *fname) {
    else if ( info->aspect_ratio == 0x44 || info->aspect_ratio == 0x54 || info->aspect_ratio == 0x55 )
       strcpy(info->aspect_ratio_str, "16:9");
    else {
-      fprintf(stderr, "WARNING: Unknown aspect ratio value in MOI file: %02X\n", info->aspect_ratio);
+      fprintf(stderr, "ERROR: Unknown aspect ratio value in MOI file: %02X\n", info->aspect_ratio);
       exit(1);
    }
 
@@ -506,7 +547,7 @@ void get_moi_info(moi_info_type *info, char *fname) {
          info->moi_year, info->moi_mon, info->moi_day, info->moi_hour, info->moi_min);
    strcpy(info->moi_date_str,str);
 
-   if ( verbose >= 2 || info_only ) {
+   if ( (verbose >= 2) || info_only ) {
       printf("%s: MOI Info in (%s):\n", this, fname);
       printf("   moi_date_str   = %s\n", info->moi_date_str);
       printf("   mtime_date_str = %s\n", info->mtime_date_str);
@@ -785,23 +826,29 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
 }
 
 
-
 /*****************************************************************************
  * Return true if fname is one of the file types we are looking for
+ * suffixes is an array of file suffixes to look for.
+ * last entry must be null
+ * case of suffix strings is unimportant (.txt or .TXT will both match)
+ * for example, call with
+ *   char mytypes[] = { ".txt", ".dat", NULL };
+ *   is_file_type(fname, mytypes);
  ****************************************************************************/
-int is_search_ent(char *fname) {
-   static char *searched_entries[] = { ".MOD", ".mod", ".Mod", NULL };
+int is_file_type(char *fname, char **suffixes) {
    char **p;
    int nlen, slen;
 
    nlen = strlen(fname);
-   for (p = searched_entries; *p; p++) {
+   for (p = suffixes; *p; p++) {
       slen = strlen(*p);
       if ( nlen >= slen && strncasecmp(fname + nlen - slen, *p, slen) == 0 )
          return 1;
    }
    return 0;
 }
+
+
 
 /*****************************************************************************
  * Check to make sure dest_dir exists.  If not, create it.
@@ -892,8 +939,8 @@ void usage() {
    printf("\n");
    printf(" SYNOPSIS\n");
    printf("    Information only:\n");
-   printf("    %s -i /path/to/source/dir/file.MOI\n", this);
-   printf("    %s -i /path/to/source/dir\n", this);
+   printf("    %s -i -f /path/to/source/dir/file.MOI\n", this);
+   printf("    %s -i -s /path/to/source/dir\n", this);
    printf("\n");
    printf("    Convert to mpeg:\n");
    printf("    %s -f /path/to/source/dir/file.MOD -d /path/to/destination/dir\n", this);
@@ -917,15 +964,32 @@ void usage() {
    printf("    recorded in 16:9 ratio, the aspect ratio will not be set correctly in the\n");
    printf("    .MOD file.\n");
    printf("\n");
-   printf("    I have only tested this with my camcorder (Panasonic SDR-H18) on Ubuntu 10.04\n");
+   printf("    I have only tested this with my camcorder (Panasonic SDR-H18) on Ubuntu 10.04,\n");
+   printf("    11.04 and 12.04\n");
+   printf("\n");
+   printf(" REFERENCE\n");
+   printf("    File formats: \n");
+   printf("    MOD   : http://en.wikipedia.org/wiki/MOD_and_TOD\n");
+   printf("    MOI   : http://en.wikipedia.org/wiki/MOI_(file_format)\n");
+   printf("    MPEG  : http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html\n");
+   printf("    MPEG-2: http://en.wikipedia.org/wiki/MPEG-2\n");
    printf("\n");
    printf(" OPTIONS\n");
-   printf("    -v, --verbose\n");
-   printf("             Print status messages and warnings to stdout. Repeat -v option\n");
-   printf("             for more verbose output.  Anything above -vvv is mostly debug print.\n");
+   printf("    -f, --mod-file=path/to/file_name.MOD\n");
+   printf("             Convert only the single MOD file. File name can be either relative\n");
+   printf("             or absolute path.\n");
    printf("\n");
-   printf("    -h, --help\n");
-   printf("             Prints this help message\n");
+   printf("    -s, --src-dir=path/to/dir\n");
+   printf("             Source directory. Will convert all MOD/MOI pairs found in this dir.\n");
+   printf("             Path can be either relative or absolute.\n");
+   printf("             NOTE - this is currently recursive!\n");
+   printf("\n");
+   printf("    -d, --des-dir=path/to/dir\n");
+   printf("             Destination directory. All files will be saved in this directory.\n");
+   printf("             Path can be either relative or absolute.\n");
+   printf("\n");
+   printf("    -r, --recursive\n");
+   printf("             When used with -d, will process all subdirectories as well\n");
    printf("\n");
    printf("    -i, --info\n");
    printf("             Prints information from MOI file only, does not convert\n");
@@ -935,31 +999,34 @@ void usage() {
    printf("             behavior is to skip (not convert) if an mpeg file with the same\n");
    printf("             name already exists.\n");
    printf("\n");
-   printf("    -t, --modification-time, --mtime\n");
-   printf("             Use the modification time of the MOD file.  Default is to use\n");
-   printf("             the time defined in the MOI file.\n");
-   printf("\n");
    printf("    -m, --make-dirs\n");
    printf("             Make directory structure in destination dir based on file time\n");
    printf("             UNIMPLEMENTED!\n");
    printf("\n");
-   printf("    -f, --mod-file\n");
-   printf("             Convert only the single MOD file\n");
+   printf("    -t, --modification-time, --mtime\n");
+   printf("             Use the modification time of the MOD file.  Default is to use\n");
+   printf("             the time defined in the MOI file.\n");
    printf("\n");
-   printf("    -s, --src-dir\n");
-   printf("             Source directory. Will convert all MOD/MOI pairs found in this dir\n");
+   printf("    -v, --verbose\n");
+   printf("             Print status messages and warnings to stdout. Repeat -v option\n");
+   printf("             for more verbose output.  Anything above -vvv is mostly debug print.\n");
    printf("\n");
-   printf("    -d, --des-dir\n");
-   printf("             Destination directory. All files will be saved in this directory\n");
+   printf("    -h, --help\n");
+   printf("             Prints this help message\n");
    printf("\n");
-   printf(" REFERENCE\n");
-   printf("    File formats: \n");
-   printf("    MOD   : http://en.wikipedia.org/wiki/MOD_and_TOD\n");
-   printf("    MOI   : http://en.wikipedia.org/wiki/MOI_(file_format)\n");
-   printf("    MPEG  : http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html\n");
-   printf("    MPEG-2: http://en.wikipedia.org/wiki/MPEG-2\n");
+   printf(" AUTHOR\n");
+   printf("    Matt Jeffery - mjeffe@gmail.com\n");
+   printf("    Please report bugs or enhancement requests to the author.\n");
+   printf("\n");
+   printf("COPYRIGHT AND LICENSE\n");
+   printf("\n");
+   printf("    Copyright (c) 2011, Matt Jeffery (mjeffe@gmail.com)\n");
+   printf("\n");
+   printf("    This file is free software. You can redistribute it and/or modify it under the\n");
+   printf("    terms of the FreeBSD License which is included in the header of the source\n");
    printf("\n");
    printf("\n");
+
 
 #ifdef IGNORE_THIS_FOR_REFERENCE_ONLY
    static struct option long_options[] = {
@@ -970,14 +1037,13 @@ void usage() {
       {"modification-time",no_argument,       0, 't'},
       {"mtime",            no_argument,       0, 't'},  /* alias */
       {"make-dirs",        no_argument,       0, 'm'},  /* c for create dirs */
+      {"recursive",        no_argument,       0, 'r'},
       {"mod-file",         required_argument, 0, 'f'},
       {"src-dir",          required_argument, 0, 's'},
       {"dest-dir",         required_argument, 0, 'd'},
       {0, 0, 0, 0}
    };
 #endif
-
-   exit(1);
 }
 
 
