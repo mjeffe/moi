@@ -2,6 +2,34 @@
  *
  * $Id$
  *
+ * This file is free software. You can redistribute it and/or modify it
+ * under the terms of the FreeBSD License which follows.
+ * --------------------------------------------------------------------------
+ * Copyright (c) 2011, Matt Jeffery (mjeffe@gmail.com). All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ * 
+ *    * Redistributions in binary form must reproduce the above copyright
+ *      notice, this list of conditions and the following disclaimer in the
+ *      documentation and/or other materials provided with the distribution.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * --------------------------------------------------------------------------
+ *
+ *
  * DESCRITION
  *    My camcorder - Panasonic SDR-H18 saves two files for every video,
  *    A .MOD file, which is the video file in an MPEG-2 format, and a
@@ -14,17 +42,17 @@
  *
  * TODO:
  *    - Report on when the date contained in the .MOI file is very different
- *    from the .MOD file creation date.
+ *      from the .MOD file creation date.
  *    - Make block size a parameter.
  *    - Add ability to create date / time level directories
  *    - Add check to make sure mpeg file size is same as MOD file size
  *    - Add ability to use MOI date, but make unique file name if duplicate - may not mess with this
  *    - Add ability to extract aspect ratio, frame rate, etc, from mpeg or MOD
- *    - write log
- *    - add usage message
  *
+ * AUTHOR
+ *    Matt Jeffery (mjeffe@gmail.com)
  *
- * Reference:
+ * REFERENCE
  *    Reference to the MOI file format was found here:
  *    http://en.wikipedia.org/wiki/MOI_(file_format)
  *    http://forum.camcorderinfo.com/bbs/t135224.html   (further down is English translation)
@@ -50,7 +78,7 @@
 #include <unistd.h>    /* stat, NULL, etc */
 #include <time.h>      /* localtime */
 #include <dirent.h>    /* opendir, chdir, getcwd, etc */
-#include <libgen.h>    /* basename */
+#include <libgen.h>    /* basename, dirname */
 #include <getopt.h>    /* getopt_long */
 //#include <ftw.h>       /* recursive directory traversal - not portable... */
 //#include <fcntl.h>     /* old, lower level file stuff - open, read, etc */
@@ -113,8 +141,8 @@ static char *mpeg_seqh_fr_codes[] = {   /* mpeg sequence header frame rate codes
    "forbidden!",
    "24000/1001 (23.976)",
    "24",
-   "25",
-   "30000/1001 (29.97)",
+   "25",                    /* PAL */
+   "30000/1001 (29.97)",    /* NTSC */
    "30",
    "50",
    "60000/1001 (59.94)",
@@ -149,8 +177,8 @@ int main(int argc, char *argv[]) {
    int c;
    char *src_dir = NULL;
    char *src_file = NULL, *src_file_base = NULL, *src_file_cpy1 = NULL, *src_file_cpy2 = NULL;
-   char full_dest_dir[2048];
-   char cwd[2048];
+   char abs_dest_dir[MAX_PATH_LEN];  /* used to make dest_dir an absolute path */
+   char cwd[MAX_PATH_LEN];
    /* getopt_long structures */
    int option_index = 0;
    static struct option long_options[] = {
@@ -276,11 +304,11 @@ int main(int argc, char *argv[]) {
    /* turn dest_dir into an absolute path */
    if ( dest_dir[0] != '/' ) {
       if ( !getcwd(cwd, sizeof cwd) ) {
-         perror("cannot save cwd\n");
+         perror("cannot get cwd\n");
          exit(1);
       }
-      sprintf(full_dest_dir, "%s/%s", cwd, dest_dir);
-      dest_dir = full_dest_dir;
+      sprintf(abs_dest_dir, "%s/%s", cwd, dest_dir);
+      dest_dir = abs_dest_dir;
    }
 
    if ( src_file ) {
@@ -292,12 +320,6 @@ int main(int argc, char *argv[]) {
       process_file(src_dir, src_file_base);
    }
    else {
-      /* OJO! EITHER turn dest_dir into an absolute path, or
-       * modify process_dir() so it doesn't actually cd into
-       * each dir.  Currently, once I've cd'ed into a the src_dir, I can't create
-       * my mpeg files because I'm no longer relative to whatever path I had for
-       * dest_dir.
-       */
       process_dir(src_dir);
    }
 
@@ -312,11 +334,11 @@ int main(int argc, char *argv[]) {
 void process_dir(char *dirname) {
    DIR *dir;
    struct dirent *ent;
-   char cwd[2048];
-   char newd[2048];
+   char cwd[MAX_PATH_LEN];
+   char newd[MAX_PATH_LEN];
 
    if ( !getcwd(cwd, sizeof cwd) ) {
-      perror("cannot save cwd\n");
+      perror("cannot get cwd\n");
       exit(1);
    }
    if ( chdir(dirname) < 0 ) {
@@ -327,8 +349,8 @@ void process_dir(char *dirname) {
       perror("cannot get cwd for new dir\n");
       exit(1);
    }
-   if ( verbose )
-      printf("Processing directory:%s\n", newd);
+   if ( verbose >= 1 )
+      printf("%s: processing directory:%s\n", this, newd);
 
    if ( !(dir = opendir(".")) ) {
       perror(dirname);
@@ -381,6 +403,9 @@ void process_mod(char *dir, char *fname) {
    }
 
    sprintf(mod_fname, "%s/%s", dir, fname);
+   if ( verbose >= 1 )
+      printf("%s: processing %s\n", this, mod_fname);
+
    if ( locate_moi(moi_fname, mod_fname) ) {
       get_moi_info(info, moi_fname);
       if ( !info_only )
@@ -481,8 +506,8 @@ void get_moi_info(moi_info_type *info, char *fname) {
          info->moi_year, info->moi_mon, info->moi_day, info->moi_hour, info->moi_min);
    strcpy(info->moi_date_str,str);
 
-   if ( verbose || info_only ) {
-      printf("MOI Info in (%s):\n", fname);
+   if ( verbose >= 2 || info_only ) {
+      printf("%s: MOI Info in (%s):\n", this, fname);
       printf("   moi_date_str   = %s\n", info->moi_date_str);
       printf("   mtime_date_str = %s\n", info->mtime_date_str);
       printf("   aspect_ratio   = 0x%X (%s)\n", info->aspect_ratio, info->aspect_ratio_str);
@@ -551,23 +576,20 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
    else 
       sprintf(mpeg_fname, "%s/mov-%s.mpg", dest_dir, info->moi_date_str);
 
-   if ( verbose )
-      fprintf(stdout, "Creating %s\n", mpeg_fname);
+   if ( verbose >= 2 )
+      printf("%s: creating mpeg file %s\n", this, mpeg_fname);
 
    /* test to see if the file already exists */
    if ( noclobber ) {
       if (mpeg = fopen(mpeg_fname, "r")) {
          fclose(mpeg);
-         if ( verbose )
+         if ( verbose >= 1 )
             fprintf(stderr, "   skipping... file exists and noclobber is on\n");
          free(buf);
          free(mpeg_fname);
          return;
       }
    }
-
-   if ( verbose )
-      fprintf(stdout, "opening %s\n", mpeg_fname);
 
    /* open mpeg file */
    if ( (mpeg = fopen(mpeg_fname, "wb")) == NULL ) {
@@ -592,6 +614,10 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
       }
    }
    */
+
+   if ( verbose >= 3 ) 
+      printf("%s: processing MOD file in %d byte blocks\n", this, blksize );
+
    hold = buf;
    while ( (br = fread(buf+chunksize, 1, blksize, mod)) > 0 ) {
      blk++; 
@@ -608,8 +634,8 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
       stop = end - 8;  /* signature + 4 bytes of header */
 
       if ( verbose >= 4 )
-         printf("blk(%d) br=%d, end-buf=%ld, stop-buf=%ld, end-stop=%ld, buf-hold=%ld\n",
-               blk, br, end-buf, stop-buf, end-stop, buf-hold);
+         printf("%s: blk(%d) br=%d, end-buf=%ld, stop-buf=%ld, end-stop=%ld, buf-hold=%ld\n",
+               this, blk, br, end-buf, stop-buf, end-stop, buf-hold);
       
       /* scan through the buffer */
       while ( p <= stop ) {
@@ -623,28 +649,40 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
             seqh++;
 
             if ( verbose >= 5 ) {
-               /* debug - print out the entire sequence header */
-               printf("   (blk:%d seqh:%d)", blk, seqh);
+               /* print out the entire sequence header */
+               printf("%s: (blk:%d seqh:%d)", this, blk, seqh);
                for (i=0; i<12; i++) printf(" %02X", *(p + i));
                printf("\n");
             }
             
-            /* use first sequence header we come to as our reference header */
+            /* use first sequence header we come to as our reference header
+             *
+             * If all other sequence headers do not match our reference
+             * sequence header, we skip them.  I do this because I've found
+             * some sequence header signatures followed by non-standard data in
+             * some MOD files.  I assume that it is a random occurrence of the
+             * signature in some other data section.  Needs more research, but
+             * this seems to works for now.
+             */
             if ( reference_seqh[3] == 0 ) {
                memcpy(reference_seqh, p, 12);
 
-               if ( verbose >= 2 )
-                  printf("Setting aspect ratio\n");
                if ( verbose >= 3 ) {
-                  printf("   reference sequence header [");
+                  printf("%s: found first sequence header, using as reference [", this);
                   for (i=0; i<12; i++) printf(" %02X", *(p + i));
                   printf(" ]\n");
                }
 
-               /* Seq header offset 7.  
-                * Aspect ratio is in upper nibble | frame rate is in lower nibble */
+               /* 
+                * define arfr - the aspect-ratio|frame-rate byte (offset 7) that we will
+                * use in every other sequence header we find.
+                *
+                * grab seq header offset 7. This has aspect ratio in the upper nibble,
+                * and frame rate in the lower nibble. We keep whatever the frame rate
+                * is and set the aspect ratio to whatever our MOI file said it should be
+                */
                fr = *(p + 7);  
-               fr |= 0xF0;  /* set upper nibble to 1111 */
+               fr |= 0xF0;  /* keep frame rate - set upper nibble to 1111 */
                if ( strcmp(info->aspect_ratio_str, "1:1") == 0 )
                   arfr = 0x1F & fr;
                else if ( strcmp(info->aspect_ratio_str, "4:3") == 0 )
@@ -658,28 +696,23 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
                   exit(1);
                }
               
-               if ( verbose >= 2 ) {
+               if ( verbose >= 3 ) {
                   ar = fr = *(p + 7);  
                   ar >>= 4;    /* shift upper bits to the lower nibble */
                   ar &= 0x0F;  /* blank out the upper nibble */
                   fr &= 0x0F;  /* ditto */
-                  printf("   MOD: seqh offset 7 = 0x%02X, aspect ratio = 0x%02X (%s), frame rate = 0x%02X (%s)\n", 
-                        *(p + 7), ar, mpeg_seqh_ar_codes[ar], fr, mpeg_seqh_fr_codes[fr]);
-                  printf("   Setting mpeg seqh offset 7 = 0x%02X\n", arfr);
+                  printf("%s: found MOD seqh offset 7 = 0x%02X, aspect ratio = 0x%02X (%s), frame rate = 0x%02X (%s)\n",
+                        this, *(p + 7), ar, mpeg_seqh_ar_codes[ar], fr, mpeg_seqh_fr_codes[fr]);
+                  printf("%s: using MPEG seqh offset 7 = 0x%02X\n", this, arfr);
                }
             } /* ref seqh */
 
-            /*
-             * If all other sequence headers do not match our reference
-             * sequence header, we skip them.  I do this because I've found
-             * some sequence header signatures followed by non-standard data in
-             * some MOD files.  I assume that it is a random occurrence of the
-             * signature in some other data section.  Needs more research, but
-             * this works for now.
-             */
+            /* We've got a sequence header signature, check the rest of the
+             * header against our reference header. If it does not match, skip.
+             * See note above about this. */
             if ( memcmp(reference_seqh, p, 12) != 0 ) {
                if ( verbose >= 3 ) {
-                  printf("   found sequence header signature followed by non standard data\n   [");
+                  printf("%s: found sequence header signature followed by non standard data\n   [", this);
                   for (i=0; i<12; i++) printf(" %02X", *(p + i));
                   printf(" ] skipping...\n");
                }
@@ -688,6 +721,8 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
             }
 
             /* set aspect ratio/frame rate */
+            if ( verbose >= 4 )
+               printf("%s: setting aspect ratio (sequence header %d)\n", this, seqh);
             p += 7;
             *p = arfr;
 
@@ -707,16 +742,16 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
          exit(1);
       }
       if ( verbose >= 4 )
-         printf("blk(%d) bw=%ld, tbw=%lld \n", blk, p - buf, tbw);
+         printf("%s: blk(%d) bw=%ld, tbw=%lld \n", this, blk, p - buf, tbw);
 
       /* since seqh may span blocks, move last bit of data from end of buffer
        * to the beginning of next buffer */
       chunksize = end - p;
       blksize = RW_BLOCK_SIZE - chunksize;
 
-      if ( verbose >= 4 )
-         printf("blk(%d) Bytes to end of block: %d, RW_BLOCK_SIZE: %d, next blocksize: %d\n", 
-               blk, chunksize, RW_BLOCK_SIZE, blksize);
+      if ( verbose >= 5 )
+         printf("%s: blk(%d) Bytes to end of block: %d, RW_BLOCK_SIZE: %d, next blocksize: %d\n", 
+               this, blk, chunksize, RW_BLOCK_SIZE, blksize);
 
       memmove(buf, p, chunksize);
    }  /* end fread */
@@ -730,7 +765,7 @@ void make_mpeg(char *mod_fname, moi_info_type *info) {
       exit(1);
    }
    if ( verbose >= 4 )
-      printf("blk(%d) bw=%ld, tbw=%lld \n", blk, p - buf, tbw);
+      printf("%s: blk(%d) bw=%ld, tbw=%lld \n", this, blk, p - buf, tbw);
 
 
    /* wrap up */
@@ -886,7 +921,8 @@ void usage() {
    printf("\n");
    printf(" OPTIONS\n");
    printf("    -v, --verbose\n");
-   printf("             Verbose messages\n");
+   printf("             Print status messages and warnings to stdout. Repeat -v option\n");
+   printf("             for more verbose output.  Anything above -vvv is mostly debug print.\n");
    printf("\n");
    printf("    -h, --help\n");
    printf("             Prints this help message\n");
