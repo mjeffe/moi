@@ -41,19 +41,21 @@
  *    file name and sets the aspect ratio in the .mpg file.
  *
  * TODO:
- *    - look at making some of the path variables static (i.e. not malloc'ed)
+ *    - BUG - since I create the mpeg file name seperately from the copied moi file,
+ *      they could end up with different names.
+ *
+ *    - Add ability to use MOI date, but make unique file name if duplicate - moi resolution is 1 minute!
+ *      The noclobber prevents disaster, but needs to be solved.
  *    - clean up file name stuff - in particular, checking for MOI file by open/close. Should
  *      instead, check for moi and return FILE *moi_fp.
- *    - Add ability to use MOI date, but make unique file name if duplicate - moi resolution is 1 minute!
  *    - Add check to make sure mpeg file size is same as MOD file size
- *    - modify so we can get info only on an MOI file, regardless of whether or not
- *      it has an accompanying MOD file. This will require rearanging how process_file()
- *      and process_mod() work.
  *    - Report on when the date contained in the .MOI file is very different
  *      from the .MOD file creation date.
  *    - Make block size a parameter.
  *    - Add ability to extract aspect ratio, frame rate, etc, from mpeg or MOD
  *    - when looking for .MOI file, may want to try ignoring case for suffix
+ *    - review some of the path variables - could be static (i.e. not malloc'ed)???
+ *    - need to implement process_dir() without cd'ing into each dir!
  *
  * AUTHOR
  *    Matt Jeffery (mjeffe@gmail.com)
@@ -138,6 +140,8 @@ int recursive = 0;           /* if set, process subdirs */
 int date_to_use = MOI_DATE;  /* default to using date in MOI file */
 int info_only = 0;           /* if set, don't copy, only report MOI info */
 int noclobber = 1;           /* if set, do not overwrite existing mpeg files */
+static char *mod_suffix[] = { ".mod", ".MOD", NULL };
+static char *moi_suffix[] = { ".moi", ".MOI", NULL };
 static char *mpeg_seqh_ar_codes[] = {   /* mpeg sequence header aspect ratio codes */
    "forbidden!",
    "1:1",
@@ -178,6 +182,7 @@ void process_mod(char *dir, char *fname);
 void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info);
 void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info);
 int set_mpeg_ar(FILE *mpeg, char *moi_ar_str);
+void * mymalloc(size_t size);
 static int do_mkdir(const char *path, mode_t mode);
 int mkpath(const char *path, mode_t mode);
 
@@ -357,6 +362,11 @@ int main(int argc, char *argv[]) {
       src_file_cpy2 = strdup(src_file);
       src_dir = dirname(src_file_cpy2);
       src_file_base = basename(src_file_cpy1);
+
+      if ( info_only && is_file_type(src_file_base, mod_suffix) ) {
+         fprintf(stderr, "%s: unable to extract MOI info from an MOD file\n", this);
+         exit(1);
+      }
       process_file(src_dir, src_file_base);
    }
    else {
@@ -415,36 +425,37 @@ void process_dir(char *dirname) {
 
 
 /*****************************************************************************
- * Function to be called from process_dir - trying to keep process_dir()
- * a generic directory traversal.
- ****************************************************************************/
-void process_file(char *dir, char *fname) {
-   static char *mod_suffix[] = { ".mod", NULL };
-   if ( is_file_type(fname, mod_suffix) )
-      process_mod(dir, fname); 
-}
-
-
-/*****************************************************************************
+ * called from process_dir - keep process_dir() a generic directory traversal
+ *
  * 1) check for sister MOI file
  * 2) extract necessary info from MOI file
  * 3) create mpeg file in target dir
  ****************************************************************************/
-void process_mod(char *dir, char *fname) {
-   char *mod_fname, *moi_fname, *mpeg_dirname;
+void process_file(char *dir, char *fname) {
    moi_info_type *info;
+   char moi_fname[MAX_PATH_LEN];
+   char mod_fname[MAX_PATH_LEN];
+   char mpeg_dirname[MAX_PATH_LEN];
 
 
-   info = (moi_info_type *) malloc(sizeof(moi_info_type));
-   moi_fname = (char *) malloc(MAX_PATH_LEN);
-   mod_fname = (char *) malloc(MAX_PATH_LEN);
-   mpeg_dirname   = (char *) malloc(MAX_PATH_LEN);
-   if ( info == NULL || mod_fname == NULL || moi_fname == NULL || mpeg_dirname == NULL ) {
-      fprintf(stderr, "%s: unable to allocate memory in process_mod()\n", this);
-      exit(1);
+   /* if called with --info-only, we only process MOI files */
+   if ( info_only ) {
+      if ( is_file_type(fname, moi_suffix) ) {
+         info = (moi_info_type *) mymalloc(sizeof(moi_info_type));
+         sprintf(moi_fname, "%s/%s", dir, fname);
+         get_moi_info(info, moi_fname);
+         free(info);
+      }
+      return;
    }
 
+   /* we only care about MOD files at this point */
+   if ( ! is_file_type(fname, mod_suffix) )
+      return;
+
+   info = (moi_info_type *) mymalloc(sizeof(moi_info_type));
    sprintf(mod_fname, "%s/%s", dir, fname);
+
    if ( verbose >= 2 )
       printf("-----------------------------------\n");
    if ( verbose >= 1 )
@@ -453,11 +464,14 @@ void process_mod(char *dir, char *fname) {
    if ( ! locate_moi(moi_fname, mod_fname) ) {
       fprintf(stderr, "%s: WARNING: no matching .MOI file for %s\n", this, mod_fname);
       fprintf(stderr, "   skipping...\n");
+      free(info);
       return;
    }
 
-   if ( ! get_moi_info(info, moi_fname) || info_only )
+   if ( ! get_moi_info(info, moi_fname) ) {
+      free(info);
       return;
+   }
 
    if ( make_dirs ) {
       /* build output dir structure */
@@ -478,9 +492,6 @@ void process_mod(char *dir, char *fname) {
    copy_moi(moi_fname, mpeg_dirname, info);
 
    free(info);
-   free(moi_fname);
-   free(mod_fname);
-   free(mpeg_dirname);
 }
 
 /*****************************************************************************
@@ -1010,6 +1021,20 @@ int ignore_ent(char *fname) {
 }
 
 
+/*************************************************************************
+ * return true if the file exists
+ ************************************************************************/
+int file_exists(char *fname) {
+   FILE *f = NULL;
+
+   if (f = fopen(fname, "r")) {
+      fclose(f);
+      return 1;
+   }
+   return 0;
+}
+
+
 
 
 /*****************************************************************************
@@ -1060,16 +1085,15 @@ void usage() {
    printf("    MPEG-2: http://en.wikipedia.org/wiki/MPEG-2\n");
    printf("\n");
    printf(" OPTIONS\n");
-   printf("    -f, --mod-file=path/to/file_name.MOD\n");
-   printf("             Convert only the single MOD file. File name can be either relative\n");
-   printf("             or absolute path.\n");
+   printf("    -f, --src-file=path/to/file_name\n");
+   printf("             Convert only the single MOD file or get info from a single MOI file.\n"); 
+   printf("             Can provide either relative or absolute path.\n");
    printf("\n");
    printf("    -s, --src-dir=path/to/dir\n");
    printf("             Source directory. Will convert all MOD/MOI pairs found in this dir.\n");
    printf("             Path can be either relative or absolute.\n");
-   printf("             NOTE - this is currently recursive!\n");
    printf("\n");
-   printf("    -d, --des-dir=path/to/dir\n");
+   printf("    -d, --dest-dir=path/to/dir\n");
    printf("             Destination directory. All files will be saved in this directory.\n");
    printf("             Path can be either relative or absolute.\n");
    printf("\n");
@@ -1077,7 +1101,11 @@ void usage() {
    printf("             When used with -d, will process all subdirectories as well\n");
    printf("\n");
    printf("    -i, --info\n");
-   printf("             Prints information from MOI file only, does not convert MOD file\n");
+   printf("             Prints information from MOI file only, does not convert MOD file.\n");
+   printf("             If you use -f you must pass an MOI file.  If you use -d, %s will\n", this);
+   printf("             scan the directory for .MOI files and report the information\n");
+   printf("             from each. NOTE: when using this option, %s does not care if the\n", this);
+   printf("             MOI file has a matching MOD file.\n");
    printf("\n");
    printf("    -c, --clobber\n");
    printf("             Allow overwriting of mpeg files with the same name. Default\n");
@@ -1114,23 +1142,20 @@ void usage() {
    printf("\n");
    printf("\n");
 
+}
 
-#ifdef IGNORE_THIS_FOR_REFERENCE_ONLY
-   static struct option long_options[] = {
-      {"verbose",          no_argument,       0, 'v'},
-      {"help",             no_argument,       0, 'h'},
-      {"info",             no_argument,       0, 'i'},
-      {"clobber",          no_argument,       0, 'c'},
-      {"modification-time",no_argument,       0, 't'},
-      {"mtime",            no_argument,       0, 't'},  /* alias */
-      {"make-dirs",        no_argument,       0, 'm'},  /* c for create dirs */
-      {"recursive",        no_argument,       0, 'r'},
-      {"mod-file",         required_argument, 0, 'f'},
-      {"src-dir",          required_argument, 0, 's'},
-      {"dest-dir",         required_argument, 0, 'd'},
-      {0, 0, 0, 0}
-   };
-#endif
+
+/*************************************************************************
+ * combine malloc with error check and die
+ ************************************************************************/
+void * mymalloc(size_t size) {
+   void *p = NULL;
+
+   if ( (p = malloc(size)) == NULL ) {
+      fprintf(stderr, "cannot allocate memory");
+      exit(1);
+   }
+   return p;
 }
 
 
