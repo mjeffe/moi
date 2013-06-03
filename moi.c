@@ -41,9 +41,9 @@
  *    file name and sets the aspect ratio in the .mpg file.
  *
  * TODO:
- *    - copy and save .moi files along with .mpg files
- *    - Add ability to create date / time level directories
- *    - make recursive flag and CHANGE process_dir() so it does not recurse by default!
+ *    - look at making some of the path variables static (i.e. not malloc'ed)
+ *    - clean up file name stuff - in particular, checking for MOI file by open/close. Should
+ *      instead, check for moi and return FILE *moi_fp.
  *    - Add ability to use MOI date, but make unique file name if duplicate - moi resolution is 1 minute!
  *    - Add check to make sure mpeg file size is same as MOD file size
  *    - modify so we can get info only on an MOI file, regardless of whether or not
@@ -133,7 +133,7 @@ typedef struct moi_info {
 char *this;
 int verbose = 0;
 char *dest_dir;
-int make_dirs = 0;           /* if set, create seperate directories for each date */
+int make_dirs = 1;           /* if set, create seperate directories for each date */
 int recursive = 0;           /* if set, process subdirs */
 int date_to_use = MOI_DATE;  /* default to using date in MOI file */
 int info_only = 0;           /* if set, don't copy, only report MOI info */
@@ -165,10 +165,9 @@ static char *mpeg_seqh_fr_codes[] = {   /* mpeg sequence header frame rate codes
  * function prototypes
  */
 void usage();
-void get_moi_info(moi_info_type *info, char *fname);
 int locate_moi(char *moi_fname, char *mod_fname);
+int get_moi_info(moi_info_type *info, char *mod_fname);
 static int chomp(char *s);
-void make_dir(char *dir);
 static int isdir(char *name);
 int ignore_ent(char *name);
 //int is_search_ent(char *fname);
@@ -176,7 +175,8 @@ int is_file_type(char *fname, char **suffixes);
 void process_dir(char *dirname);
 void process_file(char *dir, char *fname);
 void process_mod(char *dir, char *fname);
-void make_mpeg(char *mod_fname, moi_info_type *info, char *output_dir);
+void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info);
+void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info);
 int set_mpeg_ar(FILE *mpeg, char *moi_ar_str);
 static int do_mkdir(const char *path, mode_t mode);
 int mkpath(const char *path, mode_t mode);
@@ -248,11 +248,9 @@ int main(int argc, char *argv[]) {
          case 't':
             date_to_use = MTIME_DATE;
             break;
-         /* create directory for each date */
+         /* do NOT create directory for each date */
          case 'm':
-            make_dirs = 1;
-            fprintf(stderr, "--make-dirs is currently unimplemented\n");
-            exit(1);
+            make_dirs = 0;
             break;
          /* process a single MOD file, rather than an entire directory */
          case 'f':
@@ -392,7 +390,7 @@ void process_dir(char *dirname) {
       exit(1);
    }
    if ( verbose >= 2 )
-      printf("%s: processing directory:%s\n", this, newd);
+      printf("%s: processing %s\n", this, newd);
 
    if ( !(dir = opendir(".")) ) {
       perror(dirname);
@@ -433,42 +431,124 @@ void process_file(char *dir, char *fname) {
  * 3) create mpeg file in target dir
  ****************************************************************************/
 void process_mod(char *dir, char *fname) {
-   char *mod_fname, *dirname;
+   char *mod_fname, *moi_fname, *mpeg_dirname;
    moi_info_type *info;
 
 
    info = (moi_info_type *) malloc(sizeof(moi_info_type));
+   moi_fname = (char *) malloc(MAX_PATH_LEN);
    mod_fname = (char *) malloc(MAX_PATH_LEN);
-   dirname   = (char *) malloc(MAX_PATH_LEN);
-   if ( info == NULL || mod_fname == NULL || dirname == NULL ) {
+   mpeg_dirname   = (char *) malloc(MAX_PATH_LEN);
+   if ( info == NULL || mod_fname == NULL || moi_fname == NULL || mpeg_dirname == NULL ) {
       fprintf(stderr, "%s: unable to allocate memory in process_mod()\n", this);
       exit(1);
    }
 
    sprintf(mod_fname, "%s/%s", dir, fname);
+   if ( verbose >= 2 )
+      printf("-----------------------------------\n");
    if ( verbose >= 1 )
       printf("%s: processing %s\n", this, mod_fname);
 
-   get_moi_info(info, mod_fname);
+   if ( ! locate_moi(moi_fname, mod_fname) ) {
+      fprintf(stderr, "%s: WARNING: no matching .MOI file for %s\n", this, mod_fname);
+      fprintf(stderr, "   skipping...\n");
+      return;
+   }
 
-   /* build output dir structure */
-   if ( date_to_use == MTIME_DATE )
-      sprintf(dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->mtime_year, info->mtime_mon, info->mtime_day);
-   else
-      sprintf(dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->moi_year, info->moi_mon, info->moi_day);
+   if ( ! get_moi_info(info, moi_fname) || info_only )
+      return;
 
-   if ( verbose >= 3 )
-      printf("%s: creating target dir %s\n", this, dirname);
-   mkpath(dirname, 0777);
+   if ( make_dirs ) {
+      /* build output dir structure */
+      if ( date_to_use == MTIME_DATE )
+         sprintf(mpeg_dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->mtime_year, info->mtime_mon, info->mtime_day);
+      else
+         sprintf(mpeg_dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->moi_year, info->moi_mon, info->moi_day);
 
-   if ( !info_only )
-      make_mpeg(mod_fname, info, dirname);
+      if ( verbose >= 3 )
+         printf("%s: creating target dir %s\n", this, mpeg_dirname);
+      mkpath(mpeg_dirname, 0777);
+   }
+   else {
+      sprintf(mpeg_dirname, "%s\0", dest_dir);
+   }
+
+   make_mpeg(mod_fname, mpeg_dirname, info);
+   copy_moi(moi_fname, mpeg_dirname, info);
 
    free(info);
+   free(moi_fname);
    free(mod_fname);
-   free(dirname);
+   free(mpeg_dirname);
 }
 
+/*****************************************************************************
+ ****************************************************************************/
+void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info) {
+   FILE *src, *dest;
+   char *buf, *dest_fname;
+   int br=0, bw=0;
+
+   buf = (char *) malloc(RW_BLOCK_SIZE);
+   dest_fname = (char *) malloc(MAX_PATH_LEN);
+   if (buf == NULL || dest_fname == NULL ) {
+      fprintf(stderr, "%s: unable to allocate memory for buffers in copy_moi()\n", this);
+      exit(1);
+   }
+
+
+   /* build the moi file name */
+   if ( date_to_use == MTIME_DATE )
+      sprintf(dest_fname, "%s/mov-%s.moi", output_dir, info->mtime_date_str);
+   else 
+      sprintf(dest_fname, "%s/mov-%s.moi", output_dir, info->moi_date_str);
+
+   if ( verbose >= 2 )
+      fprintf(stderr, "%s: copying moi file\n", this);
+
+   /* test to see if the file already exists */
+   if ( noclobber ) {
+      if (dest = fopen(dest_fname, "rb")) {
+         fclose(dest);
+         if ( verbose >= 2 )
+            fprintf(stderr, "   skipping... file exists and noclobber is on\n");
+         free(buf);
+         return;
+      }
+   }
+
+   /* open copy from file */
+   if ( (src = fopen(moi_fname, "rb")) == NULL ) {
+      fprintf(stderr, "%s: WARNING: cannot open .MOI file to copy %s\n", this, moi_fname);
+      perror(moi_fname);
+      fprintf(stderr, "   skipping...\n");
+      return;
+   }
+   /* open copy to file */
+   if ( (dest = fopen(dest_fname, "wb")) == NULL ) {
+      fprintf(stderr, "%s: unable to open %s\n", this, dest_fname);
+      perror(dest_fname);
+      fclose(src);
+      return;
+   }
+
+   /* copy data from mod file to the mpeg file */
+   while( (br = fread(buf, 1, RW_BLOCK_SIZE, src)) > 0 ) {
+      bw = fwrite(buf, 1, br, dest);
+      if ( bw < 0 || ferror(dest) ) {
+         perror("write failed");
+         exit(1);
+      }
+   }
+
+   fclose(src);
+   fclose(dest);
+   free(buf);
+   free(dest_fname);
+
+   return;
+}
 
 /*****************************************************************************
  * parse the MOI file
@@ -476,31 +556,19 @@ void process_mod(char *dir, char *fname) {
  * http://forum.camcorderinfo.com/bbs/t135224.html  (further down is English translation)
  * http://en.wikipedia.org/wiki/MOI_(file_format)
  ****************************************************************************/
-void get_moi_info(moi_info_type *info, char *mod_fname) {
-   char *moi_fname;
-   size_t len;
+int get_moi_info(moi_info_type *info, char *moi_fname) {
    FILE *infile;
    char str[64] = "";
    struct tm *tm_buf;
    struct stat mtime_buf;
 
 
-   moi_fname = (char *) malloc(MAX_PATH_LEN);
-   if ( moi_fname == NULL ) {
-      fprintf(stderr, "%s: unable to allocate memory in get_moi_info()\n", this);
-      exit(1);
-   }
-
-   /* srip .MOD, and replace with .MOI */
-   len = strlen(mod_fname) - 4;
-   memcpy(moi_fname, mod_fname, len);
-   memcpy(moi_fname + len, ".MOI\0", 5);   
-
    /* open input file */
    infile = fopen(moi_fname, "rb");
    if (infile == NULL) {
-      fprintf(stderr, "%s: WARNING: no matching .MOI file for %s\n", this, mod_fname);
-      exit(1);
+      fprintf(stderr, "%s: WARNING: cannot open .MOI file %s\n", this, moi_fname);
+      fprintf(stderr, "   skipping...\n");
+      return 0;
    }
 
    /* get file access time on the file */
@@ -557,7 +625,7 @@ void get_moi_info(moi_info_type *info, char *mod_fname) {
       strcpy(info->aspect_ratio_str, "16:9");
    else {
       fprintf(stderr, "ERROR: Unknown aspect ratio value in MOI file: %02X\n", info->aspect_ratio);
-      exit(1);
+      return 0;
    }
 
 
@@ -569,13 +637,13 @@ void get_moi_info(moi_info_type *info, char *mod_fname) {
    strcpy(info->moi_date_str,str);
 
    if ( (verbose >= 2) || info_only ) {
-      printf("%s: MOI Info in (%s):\n", this, moi_fname);
+      printf("%s: MOI Info  (%s):\n", this, moi_fname);
       printf("   moi_date_str   = %s\n", info->moi_date_str);
       printf("   mtime_date_str = %s\n", info->mtime_date_str);
       printf("   aspect_ratio   = 0x%X (%s)\n", info->aspect_ratio, info->aspect_ratio_str);
    }
 
-   free(moi_fname);
+   return 1;
 }
 
 
@@ -613,7 +681,7 @@ void get_moi_info(moi_info_type *info, char *mod_fname) {
  * http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html#seq
  *
  ****************************************************************************/
-void make_mpeg(char *mod_fname, moi_info_type *info, char *output_dir) {
+void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info) {
    FILE *mpeg, *mod;
    char *mpeg_fname;
    unsigned char reference_seqh[] = { 0,0,0,0,0,0,0,0,0,0,0,0 };
@@ -872,12 +940,6 @@ int is_file_type(char *fname, char **suffixes) {
 
 
 
-/*****************************************************************************
- * Check to make sure dest_dir exists.  If not, create it.
- ****************************************************************************/
-void make_dir(char *dir) {
-   mkdir(dir,0777);
-}
 
 
 /*****************************************************************************
@@ -909,7 +971,8 @@ static int isdir(char *fname) {
 }
 
 /*****************************************************************************
- * Given the MOD fname, return true if an MOI file with same dir/name exists.
+ * Given the MOD fname, if an MOI file with the same dir/name exists, set
+ * moi_fname and return true, else false.
  ****************************************************************************/
 int locate_moi(char *moi_fname, char *mod_fname) {
    FILE *moi;
@@ -921,7 +984,7 @@ int locate_moi(char *moi_fname, char *mod_fname) {
    memcpy(moi_fname + len, ".MOI\0", 5);   
 
    //printf("   Looking for %s...", moi_fname);
-   if (moi = fopen(moi_fname, "r")) {
+   if (moi = fopen(moi_fname, "rb")) {
       fclose(moi);
       return 1;
    }
@@ -1014,16 +1077,18 @@ void usage() {
    printf("             When used with -d, will process all subdirectories as well\n");
    printf("\n");
    printf("    -i, --info\n");
-   printf("             Prints information from MOI file only, does not convert\n");
+   printf("             Prints information from MOI file only, does not convert MOD file\n");
    printf("\n");
    printf("    -c, --clobber\n");
    printf("             Allow overwriting of mpeg files with the same name. Default\n");
    printf("             behavior is to skip (not convert) if an mpeg file with the same\n");
    printf("             name already exists.\n");
    printf("\n");
-   printf("    -m, --make-dirs\n");
-   printf("             Make directory structure in destination dir based on file time\n");
-   printf("             UNIMPLEMENTED!\n");
+   printf("    -m, --no-make-dirs\n");
+   printf("             By default a directory structure will be created in the destination\n");
+   printf("             dir based on file time, in the format dest_dir/YYYY/MM/DD. If you\n");
+   printf("             do not want this behavior, use this option, in which case all MPEGs\n");
+   printf("             will be output in the dest_dir directory.\n");
    printf("\n");
    printf("    -t, --modification-time, --mtime\n");
    printf("             Use the modification time of the MOD file.  Default is to use\n");
