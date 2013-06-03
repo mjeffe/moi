@@ -40,12 +40,10 @@
  *    dest_dir, combines them into a single .mpg with the date as the
  *    file name and sets the aspect ratio in the .mpg file.
  *
- * TODO:
- *    - BUG - since I create the mpeg file name seperately from the copied moi file,
- *      they could end up with different names.
+ * BUGS:
+ *    - who knows...
  *
- *    - Add ability to use MOI date, but make unique file name if duplicate - moi resolution is 1 minute!
- *      The noclobber prevents disaster, but needs to be solved.
+ * TODO:
  *    - clean up file name stuff - in particular, checking for MOI file by open/close. Should
  *      instead, check for moi and return FILE *moi_fp.
  *    - Add check to make sure mpeg file size is same as MOD file size
@@ -54,8 +52,7 @@
  *    - Make block size a parameter.
  *    - Add ability to extract aspect ratio, frame rate, etc, from mpeg or MOD
  *    - when looking for .MOI file, may want to try ignoring case for suffix
- *    - review some of the path variables - could be static (i.e. not malloc'ed)???
- *    - need to implement process_dir() without cd'ing into each dir!
+ *    - need to implement process_dir() without cd'ing into each dir.  ??? do we?
  *
  * AUTHOR
  *    Matt Jeffery (mjeffe@gmail.com)
@@ -126,6 +123,7 @@ typedef struct moi_info {
    int           mtime_min;
    int           mtime_sec;
    char          mtime_date_str[64]; /* date string like: 20101004-2024 or 2010-10-04-2014 */
+   char          now_sec[24];        /* cheesy hack to make unique file names */
 } moi_info_type;
 
 
@@ -217,6 +215,7 @@ int main(int argc, char *argv[]) {
 
 
    this = argv[0];
+   setlinebuf(stdout); /* flush every line, even if redirected to file */
 
 
    optarg = NULL;
@@ -436,6 +435,9 @@ void process_file(char *dir, char *fname) {
    char moi_fname[MAX_PATH_LEN];
    char mod_fname[MAX_PATH_LEN];
    char mpeg_dirname[MAX_PATH_LEN];
+   char dest_fname[MAX_PATH_LEN];
+   char dest_fname_base[MAX_PATH_LEN];
+   int len = 0, funiq = 0;
 
 
    /* if called with --info-only, we only process MOI files */
@@ -488,32 +490,39 @@ void process_file(char *dir, char *fname) {
       sprintf(mpeg_dirname, "%s\0", dest_dir);
    }
 
-   make_mpeg(mod_fname, mpeg_dirname, info);
-   copy_moi(moi_fname, mpeg_dirname, info);
+   /* build destination file name */
+   if ( date_to_use == MTIME_DATE )
+      sprintf(dest_fname_base, "%s/mov-%s", mpeg_dirname, info->mtime_date_str);
+   else 
+      sprintf(dest_fname_base, "%s/mov-%s", mpeg_dirname, info->moi_date_str);
+
+   sprintf(dest_fname, "%s.mpeg", dest_fname_base);
+   while ( file_exists(dest_fname) ) {
+      funiq++;
+      sprintf(dest_fname, "%s_%02d.mpeg", dest_fname_base, funiq);
+   }
+
+   /* do the real work */
+   if ( verbose >= 1 )
+      printf("%s:    creating %s\n", this, dest_fname);
+   make_mpeg(mod_fname, dest_fname, info);
+   copy_moi(moi_fname, dest_fname, info);
 
    free(info);
 }
 
 /*****************************************************************************
  ****************************************************************************/
-void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info) {
+void copy_moi(char *moi_fname, char *dest_fname, moi_info_type *info) {
    FILE *src, *dest;
-   char *buf, *dest_fname;
-   int br=0, bw=0;
-
-   buf = (char *) malloc(RW_BLOCK_SIZE);
-   dest_fname = (char *) malloc(MAX_PATH_LEN);
-   if (buf == NULL || dest_fname == NULL ) {
-      fprintf(stderr, "%s: unable to allocate memory for buffers in copy_moi()\n", this);
-      exit(1);
-   }
+   char *buf;
+   int br=0, bw=0, len=0;
 
 
-   /* build the moi file name */
-   if ( date_to_use == MTIME_DATE )
-      sprintf(dest_fname, "%s/mov-%s.moi", output_dir, info->mtime_date_str);
-   else 
-      sprintf(dest_fname, "%s/mov-%s.moi", output_dir, info->moi_date_str);
+   /* trim off .mpeg extension and add .moi */
+   len = strlen(dest_fname) - 5;
+   dest_fname[len] = '\0';
+   sprintf(dest_fname, "%s.moi", dest_fname);
 
    if ( verbose >= 2 )
       fprintf(stderr, "%s: copying moi file\n", this);
@@ -522,9 +531,10 @@ void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info) {
    if ( noclobber ) {
       if (dest = fopen(dest_fname, "rb")) {
          fclose(dest);
-         if ( verbose >= 2 )
+         if ( verbose >= 2 ) {
+            fprintf(stderr, "   %s exists!\n", dest_fname);
             fprintf(stderr, "   skipping... file exists and noclobber is on\n");
-         free(buf);
+         }
          return;
       }
    }
@@ -545,6 +555,7 @@ void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info) {
    }
 
    /* copy data from mod file to the mpeg file */
+   buf = (char *) mymalloc(RW_BLOCK_SIZE);
    while( (br = fread(buf, 1, RW_BLOCK_SIZE, src)) > 0 ) {
       bw = fwrite(buf, 1, br, dest);
       if ( bw < 0 || ferror(dest) ) {
@@ -556,7 +567,6 @@ void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info) {
    fclose(src);
    fclose(dest);
    free(buf);
-   free(dest_fname);
 
    return;
 }
@@ -572,6 +582,7 @@ int get_moi_info(moi_info_type *info, char *moi_fname) {
    char str[64] = "";
    struct tm *tm_buf;
    struct stat mtime_buf;
+   time_t now = time(0);
 
 
    /* open input file */
@@ -595,6 +606,10 @@ int get_moi_info(moi_info_type *info, char *moi_fname) {
    sprintf(str, "%04d%02d%02d-%02d%02d%02d", 
          info->mtime_year, info->mtime_mon, info->mtime_day, info->mtime_hour, info->mtime_min, info->mtime_sec);
    strcpy(info->mtime_date_str, str);
+
+   /* get current time seconds - cheesy hack to make unique file names */
+   tm_buf = localtime(&now);
+   sprintf(info->now_sec, "%02d", tm_buf->tm_sec);
 
    /* get info out of the MOI fie */
 
@@ -692,9 +707,9 @@ int get_moi_info(moi_info_type *info, char *moi_fname) {
  * http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html#seq
  *
  ****************************************************************************/
-void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info) {
+void make_mpeg(char *mod_fname, char *mpeg_fname, moi_info_type *info) {
    FILE *mpeg, *mod;
-   char *mpeg_fname;
+   //char mpeg_fname[MAX_PATH_LEN];
    unsigned char reference_seqh[] = { 0,0,0,0,0,0,0,0,0,0,0,0 };
    unsigned char sig[] = { 0x00, 0x00, 0x01, 0xB3 };  /* mpeg sequence header signature */
    unsigned char *buf, *p, *stop, *end, *hold;        /* buffer pointers */
@@ -705,18 +720,8 @@ void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info) {
 
 
 
-   buf = (char *) malloc(RW_BLOCK_SIZE);
-   mpeg_fname = (char *) malloc(MAX_PATH_LEN);
-   if (buf == NULL || mpeg_fname == NULL ) {
-      fprintf(stderr, "%s: unable to allocate memory for buffers in make_mpeg\n", this);
-      exit(1);
-   }
 
-   /* build the mpeg file name */
-   if ( date_to_use == MTIME_DATE )
-      sprintf(mpeg_fname, "%s/mov-%s.mpg", output_dir, info->mtime_date_str);
-   else 
-      sprintf(mpeg_fname, "%s/mov-%s.mpg", output_dir, info->moi_date_str);
+   //sprintf(mpeg_fname, "%s.mpeg", dest_fname_base);
 
    if ( verbose >= 2 )
       printf("%s: creating mpeg file %s\n", this, mpeg_fname);
@@ -725,10 +730,10 @@ void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info) {
    if ( noclobber ) {
       if (mpeg = fopen(mpeg_fname, "r")) {
          fclose(mpeg);
-         if ( verbose >= 1 )
+         if ( verbose >= 1 ) {
+            fprintf(stderr, "   %s exists!\n", mpeg_fname);
             fprintf(stderr, "   skipping... file exists and noclobber is on\n");
-         free(buf);
-         free(mpeg_fname);
+         }
          return;
       }
    }
@@ -747,6 +752,8 @@ void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info) {
    }
 
    /* copy data from mod file to the mpeg file */
+   buf = (char *) mymalloc(RW_BLOCK_SIZE);
+
    /*
    while( (br = fread(buf, 1, RW_BLOCK_SIZE, mod)) > 0 ) {
       bw = fwrite(buf, 1, br, mpeg);
@@ -923,7 +930,6 @@ void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info) {
    }
 
    free(buf);
-   free(mpeg_fname);
 }
 
 
