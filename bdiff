@@ -1,0 +1,19 @@
+#!/bin/bash
+
+this=`basename $0`
+
+if [ $# -lt 2 ]; then
+   echo "usage: $this file1 file2"
+   exit 1
+fi
+f1="$1"
+f2="$2"
+
+f1temp=.bdiff.`basename $f1`
+f2temp=.bdiff.`basename $f2`
+
+od -tx1 -Ad $f1 > $f1temp
+od -tx1 -Ad $f2 > $f2temp
+
+diff $f1temp $f2temp
+
