@@ -478,16 +478,16 @@ void process_file(char *dir, char *fname) {
    if ( make_dirs ) {
       /* build output dir structure */
       if ( date_to_use == MTIME_DATE )
-         sprintf(mpeg_dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->mtime_year, info->mtime_mon, info->mtime_day);
+         sprintf(mpeg_dirname, "%s/%04d/%02d/%02d", dest_dir, info->mtime_year, info->mtime_mon, info->mtime_day);
       else
-         sprintf(mpeg_dirname, "%s/%04d/%02d/%02d\0", dest_dir, info->moi_year, info->moi_mon, info->moi_day);
+         sprintf(mpeg_dirname, "%s/%04d/%02d/%02d", dest_dir, info->moi_year, info->moi_mon, info->moi_day);
 
       if ( verbose >= 3 )
          printf("%s: creating target dir %s\n", this, mpeg_dirname);
       mkpath(mpeg_dirname, 0777);
    }
    else {
-      sprintf(mpeg_dirname, "%s\0", dest_dir);
+      sprintf(mpeg_dirname, "%s", dest_dir);
    }
 
    /* build destination file name */
@@ -658,7 +658,7 @@ int get_moi_info(moi_info_type *info, char *moi_fname) {
    fclose(infile);
 
    //fprintf(stdout, "%s date: %02d/%02d/%d %02d:%02d\n", fname, month, day, year, hour, minute);
-   sprintf(str, "%04d%02d%02d-%02d%02d\0", 
+   sprintf(str, "%04d%02d%02d-%02d%02d", 
          info->moi_year, info->moi_mon, info->moi_day, info->moi_hour, info->moi_min);
    strcpy(info->moi_date_str,str);
 
