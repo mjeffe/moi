@@ -29,16 +29,33 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * --------------------------------------------------------------------------
  *
+ * USE AT YOUR OWN RISK!!!
+ *
+ * PLEASE be aware, that this works for me, so I am making it available to
+ * others. However, I have never tested it on anything other than my own
+ * equipment.
  *
  * DESCRITION
- *    My camcorder - Panasonic SDR-H18 saves two files for every video,
- *    A .MOD file, which is the video file in an MPEG-2 format, and a
- *    .MOI file, which contains information about the video file, such
- *    as the date, frame rate, aspect ratio, etc.
+ *    The Panasonic SDR-H18 digital camcorder (and several other brands) saves
+ *    two files for every video, to it's internal hard drive or SD card. It
+ *    saves a .MOD file, which is the video file in an MPEG-2 format, and a .MOI
+ *    file, which contains information about the video file, such as the date,
+ *    frame rate, aspect ratio, etc.
+ *
+ *    Panasonic provided software for Windows only, which would extract these
+ *    files from the camcorder, and do some sort of processing to combine the
+ *    .MOD and .MOI files into a single .MPG video file, and save it to the
+ *    computer.
+ *
+ *    Since I run Linux, I needed a way to extract and convert my videos.
  *
  *    This program copies .MOD/.MOI file pairs from the src_dir to the
  *    dest_dir, combines them into a single .mpg with the date as the
  *    file name and sets the aspect ratio in the .mpg file.
+ *
+ *    Note that at the time of this writing, the .MOI file is undocumented. Due
+ *    to the hard work of some very generous people, most of it has been
+ *    reverse engineered. See reference below.
  *
  * BUGS:
  *    - who knows...
@@ -67,7 +84,6 @@
  *    http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html
  *
  *    recursive directory traversal:
- *    http://www.dreamincode.net/code/snippet271.htm
  *    http://code.google.com/p/treetraversal/downloads/detail?name=tree%20traversal.zip&can=2&q=
  *
  *    recursive directory traversal using ftw:
@@ -932,7 +948,6 @@ void make_mpeg(char *mod_fname, char *mpeg_fname, moi_info_type *info) {
    free(buf);
 }
 
-
 /*****************************************************************************
  * Return true if fname is one of the file types we are looking for
  * suffixes is an array of file suffixes to look for.
@@ -954,10 +969,6 @@ int is_file_type(char *fname, char **suffixes) {
    }
    return 0;
 }
-
-
-
-
 
 /*****************************************************************************
  * remove newline and/or carriage return from end of a string 
@@ -1010,8 +1021,6 @@ int locate_moi(char *moi_fname, char *mod_fname) {
    return 0;
 }
 
-
-
 /*****************************************************************************
  * Return true if NAME should not be recursed into
  ****************************************************************************/
@@ -1026,7 +1035,6 @@ int ignore_ent(char *fname) {
    return 0;
 }
 
-
 /*************************************************************************
  * return true if the file exists
  ************************************************************************/
@@ -1039,9 +1047,6 @@ int file_exists(char *fname) {
    }
    return 0;
 }
-
-
-
 
 /*****************************************************************************
  * print usage message
@@ -1150,7 +1155,6 @@ void usage() {
 
 }
 
-
 /*************************************************************************
  * combine malloc with error check and die
  ************************************************************************/
@@ -1164,6 +1168,7 @@ void * mymalloc(size_t size) {
    return p;
 }
 
+// -------------- below is borrowed code -------------------------------------
 
 /*
  * mkpath functions by Jonathan Leffler
