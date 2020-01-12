@@ -58,11 +58,11 @@
  *    reverse engineered. See reference below.
  *
  * BUGS:
- *    - who knows...
+ *    - who knows... so far all my home videos seem fine.
  *
  * TODO:
- *    - clean up file name stuff - in particular, checking for MOI file by open/close. Should
- *      instead, check for moi and return FILE *moi_fp.
+ *    - clean up file name stuff - in particular, checking for MOI file by
+ *      open/close. Should instead, check for moi and return FILE *moi_fp.
  *    - Add check to make sure mpeg file size is same as MOD file size
  *    - Report on when the date contained in the .MOI file is very different
  *      from the .MOD file creation date.
@@ -193,6 +193,7 @@ int is_file_type(char *fname, char **suffixes);
 void process_dir(char *dirname);
 void process_file(char *dir, char *fname);
 void process_mod(char *dir, char *fname);
+int file_exists(char *fname);
 void make_mpeg(char *mod_fname, char *output_dir, moi_info_type *info);
 void copy_moi(char *moi_fname, char *output_dir, moi_info_type *info);
 int set_mpeg_ar(FILE *mpeg, char *moi_ar_str);
