@@ -32,17 +32,6 @@ reverse engineered. See reference below.
 ## BUGS:
  - who knows... so far, all my home videos seem fine.
 
-## TODO:
- - clean up file name stuff - in particular, checking for MOI file by
-   open/close. Should instead, check for moi and return `FILE *moi_fp`.
- - Add check to make sure mpeg file size is same as MOD file size
- - Report on when the date contained in the .MOI file is very different
-   from the .MOD file creation date.
- - Make block size a parameter.
- - Add ability to extract aspect ratio, frame rate, etc, from mpeg or MOD
- - when looking for .MOI file, may want to try ignoring case for suffix
- - need to implement process_dir() without cd'ing into each dir.  ??? do we?
-
 ## REFERENCE
 
 Reference to the MOI file format was found here:
