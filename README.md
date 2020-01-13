@@ -29,6 +29,13 @@ Note that at the time of this writing, the .MOI file is undocumented. Due
 to the hard work of some very generous people, most of it has been
 reverse engineered. See reference below.
 
+**update January 2020** I migrated my personal `Subversion` repository to github.
+I decided to test this code to see if it still works.  Two things: 1) Yes, it
+seems to compile and work on my Ubuntu 18.04 laptop, although I had a little
+trouble finding the old camcorder :-) and 2) I discovered that on I can just
+double click the .MOD file and it will just play. I suspect this is true on
+many newer systems.
+
 ## BUGS:
  - who knows... so far, all my home videos seem fine.
 
